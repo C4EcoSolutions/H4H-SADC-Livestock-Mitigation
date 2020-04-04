@@ -1,0 +1,159 @@
+---
+title: "H4H SADC Livestock Emissions Reduction Estimation"
+author: "Ruan de Wet"
+date: "02/04/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Objective
+
+This analysis should clip, wrangle and process the [FAO Cattle data](http://www.fao.org/livestock-systems/global-distributions/cattle/en/) required for the H4H SADC Livestock Emissions project. 
+
+The countries of interest include all non-SID SADC countries. Or those that have an appreciable number of cattle. There may be cause to include something about the sheep as well. 
+
+*One red flag to note: Jacques van Rooyen has yet to respond to my messages to him. Sarah is paying half the bill, so I am proceeding with the analysis.*
+
+## Approach
+
+I'm using the distributions that were modelled using the dasymetric method, because I'm wanting to extract the estimated cattle numbers in spatially explicit areas (defined by the communal/commercial tenure maps and the FMD zones).
+
+The land tenure and FMD zone shapefiles are to be provided by Jacques van Rooyen.
+
+## Analysis
+
+### Project Setup
+
+```{r Load libraries and helper functions, message=FALSE}
+
+library("sp")
+library("sf")
+library("tmap")
+library("rgeos")
+library("rgdal")
+library("raster")
+library("rnaturalearth")
+
+library(RColorBrewer)
+library(viridisLite)
+
+library("ggplot2")
+library("tidyr")
+library("dplyr")
+library("stringr")
+
+library("readxl")
+library("readr")
+
+ # rm(list = ls())
+
+today = Sys.Date() %>%
+  format("%y%m%d_")
+
+st_plot = function(x, ...) {x %>% st_geometry() %>% plot(...)}
+
+```
+
+### Define the project extent
+
+First step is to define the project extent (i.e. the countries to be included). 
+
+I have a .csv file in my reference data folder with the ISO codes of each country ([source](https://www.iban.com/country-codes)). That will be useful for this analysis. I also have a list of SADC countries ([source](https://en.wikipedia.org/wiki/Southern_African_Development_Community)) saved in the project directory, labelled based on whether or not it is a small island developing state. 
+
+```{r Import spatial base info}
+
+# Paths
+dsn_data = "G:/Ruan/R/_Reference Data/"
+
+# Metadata of consequence
+countries_aoi = read_csv("countries_sadc.csv") %>% filter(SID != TRUE)
+iso_all = read_excel(paste0(dsn_data, "iso_countries.xlsx")) 
+
+# Filter down to area of interest (countries to be included)
+iso_aoi = iso_all %>%
+  filter(Country %in% countries_aoi$Country) 
+
+# Not all countries were identified perfectly. The DRC and Tanzania were missed. The following code picks them out and adds them to the iso_aoi dataframe.
+
+iso_add = iso_all %>%
+  filter(str_detect(Country, "Congo") | str_detect(Country, "Tanzania"),
+         ISO_3 != "COG")
+
+iso_aoi = rbind(iso_aoi, iso_add)
+
+```
+
+With the ISO codes, we can easily specify the countries that are included in the study. They are loaded in the next chunk from the `rnaturalearth` package. 
+
+```{r Load the country borders}
+
+# Define boundary box for AOI (because there are South African Islands far South)
+bound_aoi = ne_countries(continent = "africa", scale = "small",
+                        returnclass = "sf", type = "sovereignty") %>%
+  filter(sov_a3 %in% iso_aoi$ISO_3)%>%
+  st_buffer(dist = 1) %>%
+  st_union() %>%
+  st_make_grid(n = 1) %>% 
+    st_as_sf()
+
+# Load the country borders of interest
+bord_sadc = ne_countries(continent = "africa", scale = "medium", 
+                        returnclass = "sf", type = "countries") %>%
+  filter(sov_a3 %in% iso_aoi$ISO_3) 
+  
+# Filter borders to boundary
+bord_aoi = st_intersection(bound_aoi, bord_sadc) 
+
+```
+
+### Process the FAO livestock data
+
+Now that we have the countries in the study, we can process the global livestock dataset. 
+
+```{r Import livestock data}
+
+cattle_aoi = paste0(dsn_data, "FAO Cattle Global Distribution/5_Ct_2010_Da.tif") %>% 
+  raster() %>%
+  raster::crop(bound_aoi)
+
+```
+
+In order to extract and analyse the data appropriately, we need to use a projected CRS. Becuase of the spread in latitudes (approx. 0 to -35 degrees), I am going to use the Interrupted Goode Homolosine (IGH) projection. 
+
+```{r Reproject data}
+
+cattle_aoi_igh = cattle_aoi %>% raster::projectRaster(crs = "+proj=igh")
+bord_aoi_igh = bord_aoi %>% st_transform(crs = "+proj=igh") %>% st_as_sf()
+
+```
+
+```{r Save the rasters, eval = F}
+
+writeRaster(cattle_aoi, "H4H_Cattle SADC distribution_lonlat.tif")
+writeRaster(cattle_aoi_igh, "H4H_Cattle SADC distribution_igh.tif")
+
+```
+
+
+
+### Explore the data
+
+```{r}
+
+pal_YlOrBr = c("#cccccc", brewer.pal(n = 9, name = "YlOrBr"))
+
+tm_shape(cattle_aoi) +
+  tm_grid() +
+  # tm_raster(palette = pal_YlOrBr,
+  tm_raster(palette = "YlOrBr",
+            style = "fixed", title = "Cattle population / km",
+            breaks = c(0, 10, 20, 50, 100, 250, 500,  1000, 1500, 5000, 2*10^4, 10^5)) +
+tm_shape(bord_aoi) +
+  tm_borders(col = "black") +
+tm_layout(legend.outside = T, bg.color = "#333333")
+
+```
+
