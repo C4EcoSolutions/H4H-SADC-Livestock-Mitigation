@@ -177,5 +177,5 @@ tm_shape(cattle_aoi_aw) +
 tm_shape(bord_aoi) +
   tm_borders(col = "black") +
 tm_layout(legend.outside = T, bg.color = "#333333")
-
+  
 ```
