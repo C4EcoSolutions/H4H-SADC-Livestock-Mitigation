@@ -93,7 +93,7 @@ With the ISO codes, we can easily specify the countries that are included in the
 # Define boundary box for AOI (because there are South African Islands far South)
 bound_aoi = ne_countries(continent = "africa", scale = "small",
                         returnclass = "sf", type = "sovereignty") %>%
-  filter(sov_a3 %in% iso_aoi$ISO_3)%>%
+  filter(sov_a3 %in% iso_aoi$ISO_3) %>%
   st_buffer(dist = 1) %>%
   st_union() %>%
   st_make_grid(n = 1) %>% 
@@ -119,6 +119,10 @@ cattle_aoi = paste0(dsn_data, "FAO Cattle Global Distribution/5_Ct_2010_Da.tif")
   raster() %>%
   raster::crop(bound_aoi)
 
+cattle_aoi_aw = paste0(dsn_data, "FAO Cattle Global Distribution/6_Ct_2010_Aw.tif") %>% 
+  raster() %>%
+  raster::crop(bound_aoi)
+
 ```
 
 In order to extract and analyse the data appropriately, we need to use a projected CRS. Becuase of the spread in latitudes (approx. 0 to -35 degrees), I am going to use the Interrupted Goode Homolosine (IGH) projection. 
@@ -128,12 +132,17 @@ In order to extract and analyse the data appropriately, we need to use a project
 cattle_aoi_igh = cattle_aoi %>% raster::projectRaster(crs = "+proj=igh")
 bord_aoi_igh = bord_aoi %>% st_transform(crs = "+proj=igh") %>% st_as_sf()
 
+cattle_aoi_aw_igh = cattle_aoi_aw %>% raster::projectRaster(crs = "+proj=igh")
+
 ```
 
 ```{r Save the rasters, eval = F}
 
 writeRaster(cattle_aoi, "H4H_Cattle SADC distribution_lonlat.tif")
 writeRaster(cattle_aoi_igh, "H4H_Cattle SADC distribution_igh.tif")
+
+writeRaster(cattle_aoi_aw, "H4H_Cattle SADC distribution_Aw_lonlat.tif")
+writeRaster(cattle_aoi_aw_igh, "H4H_Cattle SADC distribution_Aw_igh.tif")
 
 ```
 
@@ -157,3 +166,16 @@ tm_layout(legend.outside = T, bg.color = "#333333")
 
 ```
 
+```{r}
+
+tm_shape(cattle_aoi_aw) +
+  tm_grid() +
+  # tm_raster(palette = pal_YlOrBr,
+  tm_raster(palette = "YlOrBr",
+            style = "fixed", title = "Cattle population / km",
+            breaks = c(0, 10, 20, 50, 100, 250, 500,  1000, 1500, 5000, 2*10^4, 10^5)) +
+tm_shape(bord_aoi) +
+  tm_borders(col = "black") +
+tm_layout(legend.outside = T, bg.color = "#333333")
+
+```
