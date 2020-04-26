@@ -6,7 +6,7 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F, tidy = T, comment = F)
 ```
 
 ## Objective
@@ -15,7 +15,7 @@ This analysis should clip, wrangle and process the [FAO Cattle data](http://www.
 
 The countries of interest include all non-SID SADC countries. Or those that have an appreciable number of cattle. There may be cause to include something about the sheep as well. 
 
-*One red flag to note: Jacques has yet to secure funding for this study. Sarah is paying half the bill, so I am proceeding with the analysis.*
+*One red flag to note: Y has yet to secure funding for this study. X is paying half the bill, so I am proceeding with the analysis.*
 
 ## Approach
 
@@ -156,6 +156,15 @@ pa_aoi_npark = pa_aoi %>%
 
 ```
 
+```{r Import water}
+
+water_af = st_read(paste0(dsn_data, "GLWD_L1_WWF/glwd_1.shp")) %>% filter(AREA_SKM > 250)
+st_crs(water_af) = st_crs(bound_aoi)
+
+water_aoi = water_af %>%
+  st_crop(bound_aoi)
+
+```
 
 ```{r Process hillshade, eval = F}
 
@@ -232,7 +241,7 @@ plot_dens_Da = tm_shape(cattle_aoi) +
   tm_raster(palette = "viridis",
             style = "fixed", title = expression("Cattle population / km"^2),
             breaks = c(0, 10, 20, 50, 100, 250, 500,  1000, 1500, 5000, 2*10^4, 10^5)) +
-tm_shape(water_aoi_big) +
+tm_shape(water_aoi) +
   tm_polygons(col = "grey", border.alpha = 0) +
 tm_shape(pa_aoi_npark) +
   tm_borders(col = "purple") +
@@ -263,7 +272,7 @@ plot_dens_Aw = tm_shape(cattle_aoi_aw) +
   tm_raster(palette = "viridis",
             style = "fixed", title = expression("Cattle population / km"^2),
             breaks = c(0, 10, 20, 50, 100, 250, 500,  1000, 1500, 5000, 2*10^4, 10^5)) +
-tm_shape(water_aoi_big) +
+tm_shape(water_aoi) +
   tm_polygons(col = "grey", border.alpha = 0) +
 tm_shape(pa_aoi_npark) +
   tm_borders(col = "purple") +
@@ -286,20 +295,9 @@ plot_dens_Aw
 
 ### Process potentially useful ancillary data
 
-To get some context to the region, there are a number of potentially useful datasets that we could use. For example, what is the climate like? Where are the people? Where are 
+To get some context to the region, there are a number of potentially useful datasets that we could use. For example, what is the climate like? Where are the people? 
 
-```{r Import water}
-
-water_af = st_read(paste0(dsn_data, "GLWD_L1_WWF/glwd_1.shp")) %>% filter(AREA_SKM > 250)
-st_crs(water_af) = st_crs(bound_aoi)
-
-water_aoi = water_af %>%
-  st_crop(bound_aoi)
-
-```
-
-
-```{r Download worldclim, eval = F}
+```{r Download Worldclim, eval = F}
 
 worldclim_aoi = getData("worldclim", var = "bio", res = 5) %>% crop(bord_aoi_union)
 
@@ -307,14 +305,14 @@ writeRaster(worldclim_aoi, filename = "Data/WorldClim/H4H_WorldClim.tif", bylaye
 
 ```
 
-```{r Import pop density}
+```{r Import Human Pop Density}
 
 population_aoi = raster("Data/Accessibility/GPWv411_PopDens.tif")
 population_aoi = setMinMax(population_aoi)
 
 ```
 
-```{r Plot pop density}
+```{r Plot Human Pop Density}
 
 plot_dens_Pop = tm_shape(bound_bord) +
   tm_grid() +
@@ -322,7 +320,7 @@ plot_dens_Pop = tm_shape(bound_bord) +
 tm_shape(population_aoi) +
   tm_raster(style = "fixed", breaks = c(0,1,5,10,20,50,100, 200, 1000, 10000), palette = "magma",
             legend.hist = F, title = expression("Persons / km"^2)) +
-tm_shape(water_aoi_big) +
+tm_shape(water_aoi) +
   tm_polygons(col = "lightblue", border.alpha = 0) +
 tm_shape(pa_aoi_npark) +
   tm_borders(col = "purple") +
@@ -352,7 +350,7 @@ access_aoi[access_aoi<1] <- NA
 
 ```
 
-```{r Plot pop density}
+```{r Plot Accessibility}
 
 plot_dens_Access = tm_shape(bound_bord) +
   tm_grid() +
@@ -360,7 +358,7 @@ plot_dens_Access = tm_shape(bound_bord) +
 tm_shape(access_aoi) +
   tm_raster(style = "fixed", breaks = c(0,30,60,120,180,300,600,1200,3000), 
             legend.hist = F, palette = "PuBuGn", title = "Time to city (min)") +
-tm_shape(water_aoi_big) +
+tm_shape(water_aoi) +
   tm_polygons(col = "black", border.alpha = 0) +
 tm_shape(pa_aoi_npark) +
   tm_borders(col = "purple") +
@@ -389,7 +387,7 @@ plot_dens_Access
 plot_PAs = tm_shape(bound_bord) +
   tm_grid() +
   tm_polygons(col = "black") +
-tm_shape(water_aoi_big) +
+tm_shape(water_aoi) +
   tm_polygons(col = "lightblue", border.alpha = 0) +
 tm_shape(pa_aoi) +
   tm_polygons(col = "grey", border.alpha = 0) +
