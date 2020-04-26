@@ -15,7 +15,7 @@ This analysis should clip, wrangle and process the [FAO Cattle data](http://www.
 
 The countries of interest include all non-SID SADC countries. Or those that have an appreciable number of cattle. There may be cause to include something about the sheep as well. 
 
-*One red flag to note: Jacques van Rooyen has yet to respond to my messages to him. Sarah is paying half the bill, so I am proceeding with the analysis.*
+*One red flag to note: Jacques has yet to secure funding for this study. Sarah is paying half the bill, so I am proceeding with the analysis.*
 
 ## Approach
 
@@ -36,6 +36,7 @@ library("rgeos")
 library("rgdal")
 library("raster")
 library("rnaturalearth")
+library("feather")
 
 library(RColorBrewer)
 library(viridisLite)
@@ -48,7 +49,7 @@ library("stringr")
 library("readxl")
 library("readr")
 
- # rm(list = ls())
+ rm(list = ls())
 
 today = Sys.Date() %>%
   format("%y%m%d_")
@@ -63,13 +64,15 @@ First step is to define the project extent (i.e. the countries to be included).
 
 I have a .csv file in my reference data folder with the ISO codes of each country ([source](https://www.iban.com/country-codes)). That will be useful for this analysis. I also have a list of SADC countries ([source](https://en.wikipedia.org/wiki/Southern_African_Development_Community)) saved in the project directory, labelled based on whether or not it is a small island developing state. 
 
+22/04/20: We have since decided to exclude the DRC. Removing from iso_aoi data frame.
+
 ```{r Import spatial base info}
 
 # Paths
 dsn_data = "G:/Ruan/R/_Reference Data/"
 
 # Metadata of consequence
-countries_aoi = read_csv("countries_sadc.csv") %>% filter(SID != TRUE)
+countries_aoi = read_csv("Data/countries_sadc.csv") %>% filter(SID != TRUE)
 iso_all = read_excel(paste0(dsn_data, "iso_countries.xlsx")) 
 
 # Filter down to area of interest (countries to be included)
@@ -82,7 +85,9 @@ iso_add = iso_all %>%
   filter(str_detect(Country, "Congo") | str_detect(Country, "Tanzania"),
          ISO_3 != "COG")
 
-iso_aoi = rbind(iso_aoi, iso_add)
+iso_aoi = rbind(iso_aoi, iso_add) %>%
+  unique() %>%
+  filter(ISO_3 != "COD") # Exclude the DRC from the AOI.
 
 ```
 
@@ -99,6 +104,13 @@ bound_aoi = ne_countries(continent = "africa", scale = "small",
   st_make_grid(n = 1) %>% 
     st_as_sf()
 
+bound_bord = ne_countries(continent = "africa", scale = "small",
+                        returnclass = "sf", type = "sovereignty") %>%
+  st_crop(bound_aoi) %>%
+  st_buffer(dist = 0.01) %>%
+  st_union()
+  
+
 # Load the country borders of interest
 bord_sadc = ne_countries(continent = "africa", scale = "medium", 
                         returnclass = "sf", type = "countries") %>%
@@ -106,6 +118,66 @@ bord_sadc = ne_countries(continent = "africa", scale = "medium",
   
 # Filter borders to boundary
 bord_aoi = st_intersection(bound_aoi, bord_sadc) 
+bord_aoi_union = bord_aoi %>% st_buffer(0.01) %>% st_union() %>% st_as_sf()
+
+bord_naoi = ne_countries(continent = "africa", scale = "medium", 
+                        returnclass = "sf", type = "countries") %>%
+  filter(!sov_a3 %in% bord_aoi$sov_a3) %>%
+  st_intersection(bound_aoi)
+
+# qtm(bord_aoi)
+# qtm(bord_aoi_union)
+
+bord_aoi_union %>%
+  st_buffer(1) %>%
+  st_bbox()
+
+```
+
+```{r Process PAs, eval = F}
+
+pa_aoi = st_read(paste0(dsn_data, "Global PAs/WDPA_Apr2020-shapefile-polygons.shp")) %>%
+  st_crop(bound_aoi)
+
+st_write(pa_aoi, "Data/Accessibility/PAs/ProtectedAreas.shp")
+
+```
+
+```{r Read in PAs}
+
+pa_aoi = st_read("Data/Accessibility/PAs/ProtectedAreas.shp")
+
+iucn_cat_strict = c("Ia", "Ib", "II", "III", "IV", "V", "VI")
+
+pa_aoi_npark = pa_aoi %>%
+  filter(IUCN_CAT %in% iucn_cat_strict | DESIG_ENG %in% "National Park") 
+
+# pa_aoi_npark %>% st_plot()
+
+```
+
+
+```{r Process hillshade, eval = F}
+
+dem_aoi = raster("Data/DEM.tif")  %>%
+  raster::mask(bound_bord %>% st_as_sf()) %>%
+  projectRaster(crs = "+proj=igh", res = c(1500, 1500))
+
+slope_aoi = terrain(dem_aoi, opt = "slope")
+aspect_aoi = terrain(dem_aoi, opt = "aspect")
+hills_aoi = hillShade(slope_aoi, aspect_aoi, 30, 270) %>%
+  projectRaster(crs = "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0")
+
+tm_shape(hills_aoi) +
+  tm_raster(style = "cont", palette = "-Greys", stretch.palette = T, legend.show = F) 
+
+writeRaster(hills_aoi, paste0("Data/", today, "HillShade.tif"), overwrite = T)
+
+```
+
+```{r Read in Hillshade}
+
+hills_aoi = raster("Data/200426_HillShade.tif")
 
 ```
 
@@ -138,44 +210,216 @@ cattle_aoi_aw_igh = cattle_aoi_aw %>% raster::projectRaster(crs = "+proj=igh")
 
 ```{r Save the rasters, eval = F}
 
-writeRaster(cattle_aoi, "H4H_Cattle SADC distribution_lonlat.tif")
-writeRaster(cattle_aoi_igh, "H4H_Cattle SADC distribution_igh.tif")
+writeRaster(cattle_aoi, "Data/H4H_Cattle SADC distribution_lonlat.tif", overwrite = T)
+writeRaster(cattle_aoi_igh, "Data/H4H_Cattle SADC distribution_igh.tif", overwrite = T)
 
-writeRaster(cattle_aoi_aw, "H4H_Cattle SADC distribution_Aw_lonlat.tif")
-writeRaster(cattle_aoi_aw_igh, "H4H_Cattle SADC distribution_Aw_igh.tif")
+writeRaster(cattle_aoi_aw, "Data/H4H_Cattle SADC distribution_Aw_lonlat.tif", overwrite = T)
+writeRaster(cattle_aoi_aw_igh, "Data/H4H_Cattle SADC distribution_Aw_igh.tif", overwrite = T)
 
 ```
 
 
+### Explore the cattle data
 
-### Explore the data
 
-```{r}
+```{r Plot the interpolated cattle density distributions}
 
 pal_YlOrBr = c("#cccccc", brewer.pal(n = 9, name = "YlOrBr"))
 
-tm_shape(cattle_aoi) +
+plot_dens_Da = tm_shape(cattle_aoi) +
   tm_grid() +
   # tm_raster(palette = pal_YlOrBr,
-  tm_raster(palette = "YlOrBr",
-            style = "fixed", title = "Cattle population / km",
+  tm_raster(palette = "viridis",
+            style = "fixed", title = expression("Cattle population / km"^2),
             breaks = c(0, 10, 20, 50, 100, 250, 500,  1000, 1500, 5000, 2*10^4, 10^5)) +
-tm_shape(bord_aoi) +
-  tm_borders(col = "black") +
+tm_shape(water_aoi_big) +
+  tm_polygons(col = "grey", border.alpha = 0) +
+tm_shape(pa_aoi_npark) +
+  tm_borders(col = "purple") +
+tm_shape(bord_naoi) + 
+  tm_polygons(col = "#ffffff", alpha = 0.6, border.col = "white") +
+# tm_shape(hills_aoi) +
+#   tm_raster(style = "cont", palette = "-Greys", stretch.palette = T, alpha = 0.4, legend.show = F) +
+tm_shape(bord_aoi, is.master = T) + 
+  tm_borders(col = "white", lwd = 1.5) +
+tm_shape(bord_aoi_union) +
+  tm_borders(col = "white", lwd = 2.5) +
+tm_compass(type = "4star", position = c("right", "top"), size = 2, text.color = "white") +
+tm_scale_bar(breaks = seq(0, 1000, by = 250), position = c("right", "bottom"), text.color = "white") +
+tm_add_legend(type = "fill", col = "grey", labels = "Inland Water", border.alpha = 0, border.lwd = 0.01) +
+tm_add_legend(type = "symbol", col = "purple", labels = "IUCN Protected Area or National Park", shape = 0) +
 tm_layout(legend.outside = T, bg.color = "#333333")
+
+plot_dens_Da
+
 
 ```
 
-```{r}
+```{r Plot the reported cattle density distributions}
 
-tm_shape(cattle_aoi_aw) +
+plot_dens_Aw = tm_shape(cattle_aoi_aw) +
   tm_grid() +
   # tm_raster(palette = pal_YlOrBr,
-  tm_raster(palette = "YlOrBr",
-            style = "fixed", title = "Cattle population / km",
+  tm_raster(palette = "viridis",
+            style = "fixed", title = expression("Cattle population / km"^2),
             breaks = c(0, 10, 20, 50, 100, 250, 500,  1000, 1500, 5000, 2*10^4, 10^5)) +
-tm_shape(bord_aoi) +
-  tm_borders(col = "black") +
+tm_shape(water_aoi_big) +
+  tm_polygons(col = "grey", border.alpha = 0) +
+tm_shape(pa_aoi_npark) +
+  tm_borders(col = "purple") +
+tm_shape(bord_naoi) + 
+  tm_polygons(col = "#ffffff", alpha = 0.6, border.col = "white") +
+tm_shape(bord_aoi, is.master = T) +
+  tm_borders(col = "white", lwd = 1.5) +
+tm_shape(bord_aoi_union) +
+  tm_borders(col = "white", lwd = 2.5) +
+tm_compass(type = "4star", position = c("right", "top"), size = 2, text.color = "white") +
+tm_scale_bar(breaks = seq(0, 1000, by = 250), position = c("right", "bottom"), text.color = "white") +
+tm_add_legend(type = "fill", col = "grey", labels = "Inland Water", border.alpha = 0, border.lwd = 0.01) +
+tm_add_legend(type = "symbol", col = "purple", labels = "IUCN Protected Area or National Park", shape = 0) +
 tm_layout(legend.outside = T, bg.color = "#333333")
-  
+
+plot_dens_Aw
+
+
 ```
+
+### Process potentially useful ancillary data
+
+To get some context to the region, there are a number of potentially useful datasets that we could use. For example, what is the climate like? Where are the people? Where are 
+
+```{r Import water}
+
+water_af = st_read(paste0(dsn_data, "GLWD_L1_WWF/glwd_1.shp")) %>% filter(AREA_SKM > 250)
+st_crs(water_af) = st_crs(bound_aoi)
+
+water_aoi = water_af %>%
+  st_crop(bound_aoi)
+
+```
+
+
+```{r Download worldclim, eval = F}
+
+worldclim_aoi = getData("worldclim", var = "bio", res = 5) %>% crop(bord_aoi_union)
+
+writeRaster(worldclim_aoi, filename = "Data/WorldClim/H4H_WorldClim.tif", bylayer = T, suffix = "names")
+
+```
+
+```{r Import pop density}
+
+population_aoi = raster("Data/Accessibility/GPWv411_PopDens.tif")
+population_aoi = setMinMax(population_aoi)
+
+```
+
+```{r Plot pop density}
+
+plot_dens_Pop = tm_shape(bound_bord) +
+  tm_grid() +
+  tm_polygons(col = "black") +
+tm_shape(population_aoi) +
+  tm_raster(style = "fixed", breaks = c(0,1,5,10,20,50,100, 200, 1000, 10000), palette = "magma",
+            legend.hist = F, title = expression("Persons / km"^2)) +
+tm_shape(water_aoi_big) +
+  tm_polygons(col = "lightblue", border.alpha = 0) +
+tm_shape(pa_aoi_npark) +
+  tm_borders(col = "purple") +
+tm_shape(bord_naoi) + 
+  tm_polygons(col = "#ffffff", alpha = 0.6, border.col = "white") +
+tm_shape(bord_aoi, is.master = T) + 
+  tm_borders(col = "white", lwd = 1.5) +
+tm_shape(bord_aoi_union) +
+  tm_borders(col = "white", lwd = 2.5) +
+tm_compass(type = "4star", position = c("right", "top"), size = 2, text.color = "white") +
+tm_scale_bar(breaks = seq(0, 1000, by = 250), position = c("right", "bottom"), text.color = "white") +
+tm_add_legend(type = "fill", col = "lightblue", labels = "Inland Water") +
+tm_add_legend(type = "symbol", col = "purple", labels = "IUCN Protected Area or National Park", shape = 0) +
+tm_layout(legend.outside = T, bg.color = "#333333")
+
+plot_dens_Pop
+
+
+```
+
+
+
+```{r Import accessibility}
+
+access_aoi = raster("Data/Accessibility/Oxford_accessibility.tif")
+access_aoi[access_aoi<1] <- NA
+
+```
+
+```{r Plot pop density}
+
+plot_dens_Access = tm_shape(bound_bord) +
+  tm_grid() +
+  tm_polygons(col = "red") +
+tm_shape(access_aoi) +
+  tm_raster(style = "fixed", breaks = c(0,30,60,120,180,300,600,1200,3000), 
+            legend.hist = F, palette = "PuBuGn", title = "Time to city (min)") +
+tm_shape(water_aoi_big) +
+  tm_polygons(col = "black", border.alpha = 0) +
+tm_shape(pa_aoi_npark) +
+  tm_borders(col = "purple") +
+tm_shape(bord_naoi) + 
+  tm_polygons(col = "#ffffff", alpha = 0.6, border.col = "white") +
+tm_shape(bord_aoi, is.master = T) + 
+  tm_borders(col = "white", lwd = 1.5) +
+tm_shape(bord_aoi_union) +
+  tm_borders(col = "white", lwd = 2.5) +
+tm_compass(type = "4star", position = c("right", "top"), size = 2, text.color = "white") +
+tm_scale_bar(breaks = seq(0, 1000, by = 250), position = c("right", "bottom"), text.color = "white") +
+tm_add_legend(type = "fill", col = "black", labels = "Inland Water", border.alpha = 0, border.lwd = 0.01) +
+tm_add_legend(type = "fill", col = "red", labels = "Urban Area") +
+tm_add_legend(type = "symbol", col = "purple", labels = "IUCN Protected Area or National Park", shape = 0) +
+tm_layout(legend.outside = T, bg.color = "#333333")
+
+# , border.col = "black"
+
+plot_dens_Access
+
+
+```
+
+```{r Plot protected areas}
+
+plot_PAs = tm_shape(bound_bord) +
+  tm_grid() +
+  tm_polygons(col = "black") +
+tm_shape(water_aoi_big) +
+  tm_polygons(col = "lightblue", border.alpha = 0) +
+tm_shape(pa_aoi) +
+  tm_polygons(col = "grey", border.alpha = 0) +
+tm_shape(pa_aoi_npark) +
+  tm_polygons(col = "purple", border.alpha = 0) +
+tm_shape(bord_naoi) + 
+  tm_polygons(col = "#ffffff", alpha = 0.6, border.col = "white") +
+tm_shape(bord_aoi, is.master = T) + 
+  tm_borders(col = "white", lwd = 1.5) +
+tm_shape(bord_aoi_union) +
+  tm_borders(col = "white", lwd = 2.5) +
+tm_compass(type = "4star", position = c("right", "top"), size = 2, text.color = "white") +
+tm_scale_bar(breaks = seq(0, 1000, by = 250), position = c("right", "bottom"), text.color = "white") +
+tm_add_legend(type = "fill", col = "lightblue", labels = "Inland Water", border.col = "lightblue") +
+tm_add_legend(type = "fill", col = "grey", labels = "World Database on Protected Areas", border.col = "grey") +
+tm_add_legend(type = "fill", col = "purple", labels = "IUCN Protected Area or National Park", border.col = "purple") +
+tm_layout(legend.outside = T, bg.color = "#333333")
+
+plot_PAs
+
+
+```
+
+```{r Save the things, eval = F}
+
+tmap_save(plot_dens_Da, paste0("Output/", today, "Cattle density distribution_AOI_Da.png"), width = 9, height = 6)
+tmap_save(plot_dens_Aw, paste0("Output/", today, "Cattle density distribution_AOI_Aw.png"), width = 9, height = 6)
+tmap_save(plot_dens_Pop, paste0("Output/", today, "Human population density_AOI.png"), width = 9, height = 6)
+tmap_save(plot_dens_Access, paste0("Output/", today, "Time to city_AOI.png"), width = 9, height = 6)
+tmap_save(plot_PAs, paste0("Output/", today, "Protected Areas_AOI.png"), width = 9, height = 6)
+
+```
+
