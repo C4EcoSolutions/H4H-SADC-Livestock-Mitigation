@@ -255,7 +255,7 @@ tm_shape(bord_aoi_union) +
   tm_borders(col = "white", lwd = 2.5) +
 tm_compass(type = "4star", position = c("right", "top"), size = 2, text.color = "white") +
 tm_scale_bar(breaks = seq(0, 1000, by = 250), position = c("right", "bottom"), text.color = "white") +
-tm_add_legend(type = "fill", col = "grey", labels = "Inland Water", border.alpha = 0, border.lwd = 0.01) +
+tm_add_legend(type = "fill", col = "grey", labels = "Inland Water", border.col = "grey") +
 tm_add_legend(type = "symbol", col = "purple", labels = "IUCN Protected Area or National Park", shape = 0) +
 tm_layout(legend.outside = T, bg.color = "#333333")
 
@@ -284,7 +284,7 @@ tm_shape(bord_aoi_union) +
   tm_borders(col = "white", lwd = 2.5) +
 tm_compass(type = "4star", position = c("right", "top"), size = 2, text.color = "white") +
 tm_scale_bar(breaks = seq(0, 1000, by = 250), position = c("right", "bottom"), text.color = "white") +
-tm_add_legend(type = "fill", col = "grey", labels = "Inland Water", border.alpha = 0, border.lwd = 0.01) +
+tm_add_legend(type = "fill", col = "grey", labels = "Inland Water", border.col = "grey") +
 tm_add_legend(type = "symbol", col = "purple", labels = "IUCN Protected Area or National Park", shape = 0) +
 tm_layout(legend.outside = T, bg.color = "#333333")
 
@@ -295,15 +295,136 @@ plot_dens_Aw
 
 ### Process potentially useful ancillary data
 
-To get some context to the region, there are a number of potentially useful datasets that we could use. For example, what is the climate like? Where are the people? 
+To get some context to the region, there are a number of potentially useful datasets that we could use. For example, what is the climate like (past/future)? Where are the people? How remote are the different parts of the region? Where are the protected areas? 
 
-```{r Download Worldclim, eval = F}
+To start, I've downloaded the climate data. The below code chunk is perhaps overkill on the data extraction. I've downloaded all the historical bioclim variables and the RCP 4.5 and 8.5 simulations for 2070 at 5 min resolution. It's set up to download the future simulations from all the models, but not all models are available. That's probably for the best. We got from model "AC" to "CE" 4.5. There is no CE 8.5 for 2070, so the loop collapsed. In hindsight, that's a good thing as I don't need all that data! Also, the entire global prediction is downloaded in each instance (~50MB each) before being cropped to the AOI and saved again. Definitely overkill. 
 
-worldclim_aoi = getData("worldclim", var = "bio", res = 5) %>% crop(bord_aoi_union)
+```{r Download WorldClim and CMIP5, eval = F}
 
-writeRaster(worldclim_aoi, filename = "Data/WorldClim/H4H_WorldClim.tif", bylayer = T, suffix = "names")
+worldclim_aoi = getData("worldclim", var = "bio", res = 5) %>% crop(bound_aoi)
+
+writeRaster(worldclim_aoi, filename = "Data/WorldClim/H4H_WorldClim.tif", bylayer = T, suffix = "names", overwrite = T)
+
+
+cmip5_models = c("AC", "BC", "CC", "CE", "CN", "GF", "GD", "GS", "HD", "HG", "HE", "IN", "IP", "MI", "MR", "MC", "MP", "MG", "NO")
+cmip5_rcps = c(45, 85)
+
+for(mod in 1:length(cmip5_models)){
+  for(rcp in 1:2){
+cmip5_aoi = getData("CMIP5", var = "bio", res = 5, model = cmip5_models[mod], rcp = cmip5_rcps[rcp], year =70) %>% crop(bound_aoi)
+writeRaster(cmip5_aoi, filename = "Data/CMIP5/H4H_CMIP5.tif", bylayer = T, suffix = "names", overwrite = T)
+  }
+}
 
 ```
+
+The bioclim variables most likely to be of value are MAT, MAP, Temp seasonality and Precip seasonality. Perhaps also temp in warmest (max in month and mean in quarter) and precip in driest (month and quarter).
+
+```{r Import WorldClim and CMIP5}
+
+bioclim_detail = read_csv("Data/WorldClim/bioclim_codes.csv")
+
+bioclim_voi = paste0("bio", c(1,4,5,10,12,14,15,16))
+
+
+# WoldClim (Historical)
+path_worldclim = list.files(paste0("Data/WorldClim"),
+           pattern = ".tif",
+           all.files = T, full.names = T)
+
+df_worldclim_voi = tibble(path = path_worldclim) %>%
+  mutate(bioclim = path %>% 
+           str_extract("(?<=Clim_).+") %>%
+           str_extract(".+(?=.tif)"),
+         incl = bioclim %in% bioclim_voi) %>%
+  filter(incl == T) %>%
+  left_join(bioclim_detail, by = "bioclim")
+
+stack_worldclim_aoi = stack(df_worldclim_voi$path)
+names(stack_worldclim_aoi) = df_worldclim_voi$bioclim
+
+# CMIP 5 (Projection)
+path_cmip5 = list.files(paste0("Data/CMIP5"),
+           pattern = "CMIP5_ac",
+           all.files = T, full.names = T)
+
+df_cmip5_voi = tibble(path = path_cmip5) %>%
+  mutate(summary = path %>% 
+           str_extract("(?<=CMIP5_).+") %>%
+           str_extract(".+(?=.tif)"),
+         bioclim = paste0("bio", str_sub(summary,start = 9)),
+         rcp = str_sub(summary, start =3, end = 4),
+         incl = bioclim %in% bioclim_voi) %>%
+  filter(incl == T) %>%
+  left_join(bioclim_detail, by = "bioclim")
+
+df_cmip5_voi_45 = df_cmip5_voi %>% filter(rcp == "45")
+df_cmip5_voi_85 = df_cmip5_voi %>% filter(rcp == "85")
+
+stack_cmip545_aoi = stack(df_cmip5_voi_45$path)
+stack_cmip585_aoi = stack(df_cmip5_voi_85$path)
+
+names(stack_cmip545_aoi) = df_cmip5_voi_45$bioclim
+names(stack_cmip585_aoi) = df_cmip5_voi_85$bioclim
+
+# Combine them by bioclim and calc diff
+list_stack_bioclim = list()
+list_stack_diff = list()
+
+for(i in 1:length(df_worldclim_voi$bioclim)){
+list_stack_bioclim[[i]] = stack(stack_worldclim_aoi[[i]],
+                           stack_cmip545_aoi[[i]],
+                           stack_cmip585_aoi[[i]])
+names(list_stack_bioclim[[i]]) = c("Hist", "RCP45", "RCP85")
+
+list_stack_diff[[i]] = overlay(list_stack_bioclim[[i]]$RCP45, list_stack_bioclim[[i]]$Hist, fun=function(r1, r2){return(r1-r2)})
+list_stack_diff[[i]]$diff_85 = overlay(list_stack_bioclim[[i]]$RCP85, list_stack_bioclim[[i]]$Hist, fun=function(r1, r2){return(r1-r2)})
+names(list_stack_diff[[i]]) = c("diff_45", "diff_85")
+}
+names(list_stack_bioclim) = df_worldclim_voi$bioclim
+names(list_stack_diff) = df_worldclim_voi$bioclim
+
+```
+
+```{r Plot WorldClim and CMIP5 MAT}
+
+breaks_mat = seq(50, 350, by = 50)
+breaks_matdiff = seq(10, 55, by = 5)
+
+plot_mat = tm_shape(list_stack_bioclim[[1]]) +
+  tm_raster(style = "fixed", breaks = c(0, breaks_mat), title = "MAT (°C)", palette = "-Spectral", legend.format = list(fun = function(x) x/10)) +
+tm_shape(bound_bord) +
+  tm_borders(col = "black") +
+tm_shape(bord_naoi) + 
+  tm_polygons(col = "#ffffff", alpha = 0.6, border.col = "grey") +
+tm_shape(bord_aoi, is.master = T) +
+  tm_borders(col = "black") +
+tm_shape(bord_aoi_union) +
+  tm_borders(col = "black", lwd = 1.5) +
+tm_layout(panel.show = T, panel.labels = c("Historical", "2070 RCP 4.5", "2070 RCP 8.5"), legend.outside = T, frame = F)
+
+plot_mat
+
+plot_diffmat = tm_shape(list_stack_diff[[1]]) +
+  tm_raster(style = "fixed", breaks = c(0, breaks_matdiff), title = "Change in MAT (°C)", palette = "YlOrRd", legend.format = list(fun = function(x) x/10)) +
+tm_shape(bound_bord) +
+  tm_borders(col = "black") +
+tm_shape(bord_naoi) + 
+  tm_polygons(col = "#ffffff", alpha = 0.6, border.col = "grey") +
+tm_shape(bord_aoi, is.master = T) +
+  tm_borders(col = "black") +
+tm_shape(bord_aoi_union) +
+  tm_borders(col = "black", lwd = 1.5) +
+tm_layout(panel.show = T, panel.labels = c("2070 RCP 4.5", "2070 RCP 8.5"), legend.outside = T, frame = F)
+
+plot_diffmat
+
+# tmap_save(plot_mat, paste0("Output/", today, "Climate_", df_worldclim_voi$short[1],"_AOI.png"), width = 9, height = 3)
+# tmap_save(plot_diffmat, paste0("Output/", today, "Climate_", df_worldclim_voi$short[1]," Change_AOI.png"), width = 9, height = 3)
+
+```
+
+
 
 ```{r Import Human Pop Density}
 
@@ -332,7 +453,7 @@ tm_shape(bord_aoi_union) +
   tm_borders(col = "white", lwd = 2.5) +
 tm_compass(type = "4star", position = c("right", "top"), size = 2, text.color = "white") +
 tm_scale_bar(breaks = seq(0, 1000, by = 250), position = c("right", "bottom"), text.color = "white") +
-tm_add_legend(type = "fill", col = "lightblue", labels = "Inland Water") +
+tm_add_legend(type = "fill", col = "lightblue", border.col = "lightblue", labels = "Inland Water") +
 tm_add_legend(type = "symbol", col = "purple", labels = "IUCN Protected Area or National Park", shape = 0) +
 tm_layout(legend.outside = T, bg.color = "#333333")
 
@@ -370,8 +491,8 @@ tm_shape(bord_aoi_union) +
   tm_borders(col = "white", lwd = 2.5) +
 tm_compass(type = "4star", position = c("right", "top"), size = 2, text.color = "white") +
 tm_scale_bar(breaks = seq(0, 1000, by = 250), position = c("right", "bottom"), text.color = "white") +
-tm_add_legend(type = "fill", col = "black", labels = "Inland Water", border.alpha = 0, border.lwd = 0.01) +
-tm_add_legend(type = "fill", col = "red", labels = "Urban Area") +
+tm_add_legend(type = "fill", col = "black", labels = "Inland Water", border.col = "black") +
+tm_add_legend(type = "fill", col = "red", labels = "Urban Area", border.col = "red") +
 tm_add_legend(type = "symbol", col = "purple", labels = "IUCN Protected Area or National Park", shape = 0) +
 tm_layout(legend.outside = T, bg.color = "#333333")
 
